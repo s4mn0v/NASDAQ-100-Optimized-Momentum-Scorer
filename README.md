@@ -1,3 +1,5 @@
+<img width="1835" height="1001" alt="image" src="https://github.com/user-attachments/assets/5e84eef4-0f91-4c4e-afc1-6d28ad2f6e59" />
+
 # NASDAQ 100 Optimized Momentum Scorer
 
 This Pine Script v6 indicator is a professional-grade quantitative tool optimized specifically for the NASDAQ 100 (NQ/MNQ). It employs a sophisticated scoring engine that aggregates trend, momentum, and price action data to identify high-probability entries while utilizing advanced filters to prevent trading during unfavorable conditions.
