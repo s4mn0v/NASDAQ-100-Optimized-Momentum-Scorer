@@ -118,15 +118,29 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 		protected override void OnBarUpdate()
 		{
-			if (BarsInProgress != 0) return;
+			if (CurrentBar == 0)
+			{
+        		HmaSPlot[0] = double.NaN;
+        		BBUpper[0] = double.NaN;
+        		BBLower[0] = double.NaN;
+        		DayHigh[0] = double.NaN;
+        		DayLow[0] = double.NaN;
+    		}
+			
+    		if (BarsInProgress != 0) return;
 
-			string warmupStatus = UseAnchor
-				? string.Format("Barras: {0}/{1}  |  Ancla: {2}/{3}", CurrentBar, WarmupBars, CurrentBars[1], WarmupBars)
-				: string.Format("Barras: {0}/{1}", CurrentBar, WarmupBars);
-			Draw.TextFixed(this, "WarmupDiag", warmupStatus, TextPosition.BottomRight);
+		    string warmupStatus = UseAnchor
+        	? string.Format("Barras: {0}/{1} | Ancla: {2}/{3}", CurrentBar, WarmupBars, CurrentBars[1], WarmupBars)
+        	: string.Format("Barras: {0}/{1}", CurrentBar, WarmupBars);
+    		Draw.TextFixed(this, "WarmupDiag", warmupStatus, TextPosition.BottomRight);
 
-			if (CurrentBar < WarmupBars || (UseAnchor && CurrentBars[1] < WarmupBars)) return;
-
+		    if (CurrentBar < WarmupBars || (UseAnchor && CurrentBars[1] < WarmupBars)) 
+    		{
+        		DayHigh[0] = double.NaN;
+        		DayLow[0] = double.NaN;
+        		return; 
+    		}
+	
 			double rsxVal = CalculateRSX();
 
 			if (Bars.IsFirstBarOfSession) { dHigh = High[0]; dLow = Low[0]; }
