@@ -55,6 +55,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 	public class TheIndicatorOptimized : Indicator
 	{
 		private HMA hmaL, hmaS;
+		private HMA hma50; // HMA(50): plotted for visual reference AND used as a trend-alignment filter (see UseHma50Filter)
 		private ATR atr;
 		private Bollinger bb;
 		private EMA ema200, macd_e1, macd_e2, macd_signal;
@@ -78,6 +79,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 		private double zlema;
 		private int score;
 		private bool anchorLong, anchorShort;
+		private bool hma50TrendLong, hma50TrendShort;
 		private bool structureLongOK, structureShortOK;
 		private bool extensionOK;
 		private bool marketActive, volatilityOK;
@@ -107,6 +109,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 				AtrMultiplier = 1.5;
 				UseAnchor = true;
+				UseHma50Filter = true;
 
 				UseSwingFilter   = true;
 				SwingStrength    = 3;
@@ -125,11 +128,11 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 				ProjectionBars = 20;
 
-				AddPlot(new Stroke(Brushes.Lime, DashStyleHelper.Solid, 2), PlotStyle.Line, "HmaSPlot");
 				AddPlot(new Stroke(Brushes.Gray, DashStyleHelper.Dash, 1), PlotStyle.Line, "BBUpper");
 				AddPlot(new Stroke(Brushes.Gray, DashStyleHelper.Dash, 1), PlotStyle.Line, "BBLower");
 				AddPlot(new Stroke(Brushes.Goldenrod, DashStyleHelper.Dot, 1), PlotStyle.Line, "DayHigh");
-				AddPlot(new Stroke(Brushes.SteelBlue, DashStyleHelper.Dot, 1), PlotStyle.Line, "DayLow");
+				AddPlot(new Stroke(Brushes.Purple, DashStyleHelper.Dash, 1), PlotStyle.Line, "DayLow");
+				AddPlot(new Stroke(Brushes.DarkOrange, DashStyleHelper.Solid, 2), PlotStyle.Line, "Hma50Plot");
 			}
 			else if (State == State.Configure)
 			{
@@ -140,6 +143,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 			{
 				hmaL = HMA(HmaL_len);
 				hmaS = HMA(HmaS_len);
+				hma50 = HMA(50);
 				atr = ATR(Atr_len);
 				bb = Bollinger(2.0, BbLen);
 				ema200 = EMA(200);
@@ -161,11 +165,11 @@ namespace NinjaTrader.NinjaScript.Indicators
 		{
 			if (CurrentBar == 0)
 			{
-				HmaSPlot[0] = double.NaN;
 				BBUpper[0] = double.NaN;
 				BBLower[0] = double.NaN;
 				DayHigh[0] = double.NaN;
 				DayLow[0] = double.NaN;
+				Hma50Plot[0] = double.NaN;
 			}
 
 			if (BarsInProgress != 0) return;
@@ -196,11 +200,11 @@ namespace NinjaTrader.NinjaScript.Indicators
 				UpdateProjectedExits();
 			}
 
-			HmaSPlot[0] = hmaS[0];
 			BBUpper[0] = bb.Upper[0];
 			BBLower[0] = bb.Lower[0];
 			DayHigh[0] = dHigh;
 			DayLow[0] = dLow;
+			Hma50Plot[0] = hma50[0]; // also drives hma50TrendLong/Short via UpdateBarStructure
 		}
 
 		// Computed once per bar (at the first tick of the new bar), using
@@ -217,6 +221,12 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 			anchorLong  = !UseAnchor || (Close[1] > ema200[1] && Closes[1][1] > EMA(BarsArray[1], 200)[1]);
 			anchorShort = !UseAnchor || (Close[1] < ema200[1] && Closes[1][1] < EMA(BarsArray[1], 200)[1]);
+
+			// HMA(50) trend filter: price must be on the HMA50 side that
+			// matches the trade direction. Toggle with UseHma50Filter if you
+			// want the visual-only behavior back.
+			hma50TrendLong  = !UseHma50Filter || Close[1] > hma50[1];
+			hma50TrendShort = !UseHma50Filter || Close[1] < hma50[1];
 
 			hmaUp = hmaS[1] > hmaL[1];
 			if (hmaUp != lastHmaUp) { trendAge = 0; entryAllowed = true; impulseAllowed = true; }
@@ -251,6 +261,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 			score += (rsxVal > 50) ? 1 : -1;
 			score += (hmaS[1] > hmaS[2]) ? 1 : -1;
 			score += (Close[1] > dailyMid) ? 1 : -1;
+			score += (Close[1] > hma50[1]) ? 1 : -1;
 
 			structureLongOK  = !UseSwingFilter || lastSwingLow == double.MaxValue  || Low[1]  >= lastSwingLow;
 			structureShortOK = !UseSwingFilter || lastSwingHigh == double.MinValue || High[1] <= lastSwingHigh;
@@ -280,14 +291,14 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 			if (entryAllowed && marketActive && volatilityOK && spreadOK && trendAge <= MaxAge)
 			{
-				if (hmaUp && score >= 4 && anchorLong && structureLongOK && extensionOK && Close[0] > High[1] && !longActive)
+				if (hmaUp && score >= 4 && anchorLong && hma50TrendLong && structureLongOK && extensionOK && Close[0] > High[1] && !longActive)
 				{
 					Draw.ArrowUp(this, "L" + CurrentBar, true, 0, Low[0] - (atr[0] * AtrMultiplier), Brushes.Lime);
 					Draw.Text(this, "EL" + CurrentBar, "Entry " + Close[0].ToString("F2"), 0, Close[0] + (TickSize * 6), Brushes.Lime);
 					StartLongProjection();
 					entryAllowed = false;
 				}
-				else if (!hmaUp && score <= -4 && anchorShort && structureShortOK && extensionOK && Close[0] < Low[1] && !shortActive)
+				else if (!hmaUp && score <= -4 && anchorShort && hma50TrendShort && structureShortOK && extensionOK && Close[0] < Low[1] && !shortActive)
 				{
 					Draw.ArrowDown(this, "S" + CurrentBar, true, 0, High[0] + (atr[0] * AtrMultiplier), Brushes.Red);
 					Draw.Text(this, "ES" + CurrentBar, "Entry " + Close[0].ToString("F2"), 0, Close[0] - (TickSize * 6), Brushes.Red);
@@ -302,13 +313,13 @@ namespace NinjaTrader.NinjaScript.Indicators
 				bool rsxLongOK  = !RequireRsxExtreme || rsxVal <= (RsxOversold + 10);
 				bool rsxShortOK = !RequireRsxExtreme || rsxVal >= (RsxOverbought - 10);
 
-				if (pendingNewSwingLow && hmaUp && anchorLong && score >= ImpulseScoreThreshold && rsxLongOK && !longActive)
+				if (pendingNewSwingLow && hmaUp && anchorLong && hma50TrendLong && score >= ImpulseScoreThreshold && rsxLongOK && !longActive)
 				{
 					Draw.Diamond(this, "IL" + CurrentBar, true, 0, Low[0] - (atr[0] * AtrMultiplier * 0.5), Brushes.Cyan);
 					StartLongProjection();
 					impulseAllowed = false;
 				}
-				else if (pendingNewSwingHigh && !hmaUp && anchorShort && score <= -ImpulseScoreThreshold && rsxShortOK && !shortActive)
+				else if (pendingNewSwingHigh && !hmaUp && anchorShort && hma50TrendShort && score <= -ImpulseScoreThreshold && rsxShortOK && !shortActive)
 				{
 					Draw.Diamond(this, "IS" + CurrentBar, true, 0, High[0] + (atr[0] * AtrMultiplier * 0.5), Brushes.Fuchsia);
 					StartShortProjection();
@@ -435,11 +446,11 @@ namespace NinjaTrader.NinjaScript.Indicators
 		}
 
 		#region Properties
-		[Browsable(false), XmlIgnore] public Series<double> HmaSPlot { get { return Values[0]; } }
-		[Browsable(false), XmlIgnore] public Series<double> BBUpper { get { return Values[1]; } }
-		[Browsable(false), XmlIgnore] public Series<double> BBLower { get { return Values[2]; } }
-		[Browsable(false), XmlIgnore] public Series<double> DayHigh { get { return Values[3]; } }
-		[Browsable(false), XmlIgnore] public Series<double> DayLow { get { return Values[4]; } }
+		[Browsable(false), XmlIgnore] public Series<double> BBUpper { get { return Values[0]; } }
+		[Browsable(false), XmlIgnore] public Series<double> BBLower { get { return Values[1]; } }
+		[Browsable(false), XmlIgnore] public Series<double> DayHigh { get { return Values[2]; } }
+		[Browsable(false), XmlIgnore] public Series<double> DayLow { get { return Values[3]; } }
+		[Browsable(false), XmlIgnore] public Series<double> Hma50Plot { get { return Values[4]; } }
 
 		[NinjaScriptProperty, Range(1, int.MaxValue), Display(Name="HMA Largo", GroupName="1. Parámetros", Order=0)]
 		public int HmaL_len { get; set; }
@@ -467,6 +478,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 		[NinjaScriptProperty, Display(Name="Use Anchor Trend", GroupName="1. Parámetros", Order=11)]
 		public bool UseAnchor { get; set; }
+
+		[NinjaScriptProperty, Display(Name="Usar Filtro de Tendencia HMA(50)", GroupName="1. Parámetros", Order=12)]
+		public bool UseHma50Filter { get; set; }
 
 		[NinjaScriptProperty, Display(Name="Usar Filtro de Estructura (Swing)", GroupName="2. Estructura Swing", Order=12)]
 		public bool UseSwingFilter { get; set; }
@@ -509,60 +523,3 @@ namespace NinjaTrader.NinjaScript.Indicators
 		#endregion
 	}
 }
-
-#region NinjaScript generated code. Neither change nor remove.
-
-namespace NinjaTrader.NinjaScript.Indicators
-{
-	public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
-	{
-		private TheIndicatorOptimized[] cacheTheIndicatorOptimized;
-		public TheIndicatorOptimized TheIndicatorOptimized(int hmaL_len, int hmaS_len, int rsx_len, int atr_len, int bbLen, double minBBW, int maxAge, int macd_ma, int macd_sig, double maxSpread, double atrMultiplier, bool useAnchor, bool useSwingFilter, int swingStrength, bool allowReentry, double maxExtensionATR, double atrTPMultiplier, int projectionBars, int anchorMultiplier, int warmupBars, EntryModeType entryMode, int impulseScoreThreshold, bool requireRsxExtreme, double rsxOversold, double rsxOverbought)
-		{
-			return TheIndicatorOptimized(Input, hmaL_len, hmaS_len, rsx_len, atr_len, bbLen, minBBW, maxAge, macd_ma, macd_sig, maxSpread, atrMultiplier, useAnchor, useSwingFilter, swingStrength, allowReentry, maxExtensionATR, atrTPMultiplier, projectionBars, anchorMultiplier, warmupBars, entryMode, impulseScoreThreshold, requireRsxExtreme, rsxOversold, rsxOverbought);
-		}
-
-		public TheIndicatorOptimized TheIndicatorOptimized(ISeries<double> input, int hmaL_len, int hmaS_len, int rsx_len, int atr_len, int bbLen, double minBBW, int maxAge, int macd_ma, int macd_sig, double maxSpread, double atrMultiplier, bool useAnchor, bool useSwingFilter, int swingStrength, bool allowReentry, double maxExtensionATR, double atrTPMultiplier, int projectionBars, int anchorMultiplier, int warmupBars, EntryModeType entryMode, int impulseScoreThreshold, bool requireRsxExtreme, double rsxOversold, double rsxOverbought)
-		{
-			if (cacheTheIndicatorOptimized != null)
-				for (int idx = 0; idx < cacheTheIndicatorOptimized.Length; idx++)
-					if (cacheTheIndicatorOptimized[idx] != null && cacheTheIndicatorOptimized[idx].HmaL_len == hmaL_len && cacheTheIndicatorOptimized[idx].HmaS_len == hmaS_len && cacheTheIndicatorOptimized[idx].Rsx_len == rsx_len && cacheTheIndicatorOptimized[idx].Atr_len == atr_len && cacheTheIndicatorOptimized[idx].BbLen == bbLen && cacheTheIndicatorOptimized[idx].MinBBW == minBBW && cacheTheIndicatorOptimized[idx].MaxAge == maxAge && cacheTheIndicatorOptimized[idx].Macd_ma == macd_ma && cacheTheIndicatorOptimized[idx].Macd_sig == macd_sig && cacheTheIndicatorOptimized[idx].MaxSpread == maxSpread && cacheTheIndicatorOptimized[idx].AtrMultiplier == atrMultiplier && cacheTheIndicatorOptimized[idx].UseAnchor == useAnchor && cacheTheIndicatorOptimized[idx].UseSwingFilter == useSwingFilter && cacheTheIndicatorOptimized[idx].SwingStrength == swingStrength && cacheTheIndicatorOptimized[idx].AllowReentry == allowReentry && cacheTheIndicatorOptimized[idx].MaxExtensionATR == maxExtensionATR && cacheTheIndicatorOptimized[idx].AtrTPMultiplier == atrTPMultiplier && cacheTheIndicatorOptimized[idx].ProjectionBars == projectionBars && cacheTheIndicatorOptimized[idx].AnchorMultiplier == anchorMultiplier && cacheTheIndicatorOptimized[idx].WarmupBars == warmupBars && cacheTheIndicatorOptimized[idx].EntryMode == entryMode && cacheTheIndicatorOptimized[idx].ImpulseScoreThreshold == impulseScoreThreshold && cacheTheIndicatorOptimized[idx].RequireRsxExtreme == requireRsxExtreme && cacheTheIndicatorOptimized[idx].RsxOversold == rsxOversold && cacheTheIndicatorOptimized[idx].RsxOverbought == rsxOverbought && cacheTheIndicatorOptimized[idx].EqualsInput(input))
-						return cacheTheIndicatorOptimized[idx];
-			return CacheIndicator<TheIndicatorOptimized>(new TheIndicatorOptimized(){ HmaL_len = hmaL_len, HmaS_len = hmaS_len, Rsx_len = rsx_len, Atr_len = atr_len, BbLen = bbLen, MinBBW = minBBW, MaxAge = maxAge, Macd_ma = macd_ma, Macd_sig = macd_sig, MaxSpread = maxSpread, AtrMultiplier = atrMultiplier, UseAnchor = useAnchor, UseSwingFilter = useSwingFilter, SwingStrength = swingStrength, AllowReentry = allowReentry, MaxExtensionATR = maxExtensionATR, AtrTPMultiplier = atrTPMultiplier, ProjectionBars = projectionBars, AnchorMultiplier = anchorMultiplier, WarmupBars = warmupBars, EntryMode = entryMode, ImpulseScoreThreshold = impulseScoreThreshold, RequireRsxExtreme = requireRsxExtreme, RsxOversold = rsxOversold, RsxOverbought = rsxOverbought }, input, ref cacheTheIndicatorOptimized);
-		}
-	}
-}
-
-namespace NinjaTrader.NinjaScript.MarketAnalyzerColumns
-{
-	public partial class MarketAnalyzerColumn : MarketAnalyzerColumnBase
-	{
-		public Indicators.TheIndicatorOptimized TheIndicatorOptimized(int hmaL_len, int hmaS_len, int rsx_len, int atr_len, int bbLen, double minBBW, int maxAge, int macd_ma, int macd_sig, double maxSpread, double atrMultiplier, bool useAnchor, bool useSwingFilter, int swingStrength, bool allowReentry, double maxExtensionATR, double atrTPMultiplier, int projectionBars, int anchorMultiplier, int warmupBars, EntryModeType entryMode, int impulseScoreThreshold, bool requireRsxExtreme, double rsxOversold, double rsxOverbought)
-		{
-			return indicator.TheIndicatorOptimized(Input, hmaL_len, hmaS_len, rsx_len, atr_len, bbLen, minBBW, maxAge, macd_ma, macd_sig, maxSpread, atrMultiplier, useAnchor, useSwingFilter, swingStrength, allowReentry, maxExtensionATR, atrTPMultiplier, projectionBars, anchorMultiplier, warmupBars, entryMode, impulseScoreThreshold, requireRsxExtreme, rsxOversold, rsxOverbought);
-		}
-
-		public Indicators.TheIndicatorOptimized TheIndicatorOptimized(ISeries<double> input , int hmaL_len, int hmaS_len, int rsx_len, int atr_len, int bbLen, double minBBW, int maxAge, int macd_ma, int macd_sig, double maxSpread, double atrMultiplier, bool useAnchor, bool useSwingFilter, int swingStrength, bool allowReentry, double maxExtensionATR, double atrTPMultiplier, int projectionBars, int anchorMultiplier, int warmupBars, EntryModeType entryMode, int impulseScoreThreshold, bool requireRsxExtreme, double rsxOversold, double rsxOverbought)
-		{
-			return indicator.TheIndicatorOptimized(input, hmaL_len, hmaS_len, rsx_len, atr_len, bbLen, minBBW, maxAge, macd_ma, macd_sig, maxSpread, atrMultiplier, useAnchor, useSwingFilter, swingStrength, allowReentry, maxExtensionATR, atrTPMultiplier, projectionBars, anchorMultiplier, warmupBars, entryMode, impulseScoreThreshold, requireRsxExtreme, rsxOversold, rsxOverbought);
-		}
-	}
-}
-
-namespace NinjaTrader.NinjaScript.Strategies
-{
-	public partial class Strategy : NinjaTrader.Gui.NinjaScript.StrategyRenderBase
-	{
-		public Indicators.TheIndicatorOptimized TheIndicatorOptimized(int hmaL_len, int hmaS_len, int rsx_len, int atr_len, int bbLen, double minBBW, int maxAge, int macd_ma, int macd_sig, double maxSpread, double atrMultiplier, bool useAnchor, bool useSwingFilter, int swingStrength, bool allowReentry, double maxExtensionATR, double atrTPMultiplier, int projectionBars, int anchorMultiplier, int warmupBars, EntryModeType entryMode, int impulseScoreThreshold, bool requireRsxExtreme, double rsxOversold, double rsxOverbought)
-		{
-			return indicator.TheIndicatorOptimized(Input, hmaL_len, hmaS_len, rsx_len, atr_len, bbLen, minBBW, maxAge, macd_ma, macd_sig, maxSpread, atrMultiplier, useAnchor, useSwingFilter, swingStrength, allowReentry, maxExtensionATR, atrTPMultiplier, projectionBars, anchorMultiplier, warmupBars, entryMode, impulseScoreThreshold, requireRsxExtreme, rsxOversold, rsxOverbought);
-		}
-
-		public Indicators.TheIndicatorOptimized TheIndicatorOptimized(ISeries<double> input , int hmaL_len, int hmaS_len, int rsx_len, int atr_len, int bbLen, double minBBW, int maxAge, int macd_ma, int macd_sig, double maxSpread, double atrMultiplier, bool useAnchor, bool useSwingFilter, int swingStrength, bool allowReentry, double maxExtensionATR, double atrTPMultiplier, int projectionBars, int anchorMultiplier, int warmupBars, EntryModeType entryMode, int impulseScoreThreshold, bool requireRsxExtreme, double rsxOversold, double rsxOverbought)
-		{
-			return indicator.TheIndicatorOptimized(input, hmaL_len, hmaS_len, rsx_len, atr_len, bbLen, minBBW, maxAge, macd_ma, macd_sig, maxSpread, atrMultiplier, useAnchor, useSwingFilter, swingStrength, allowReentry, maxExtensionATR, atrTPMultiplier, projectionBars, anchorMultiplier, warmupBars, entryMode, impulseScoreThreshold, requireRsxExtreme, rsxOversold, rsxOverbought);
-		}
-	}
-}
-
-#endregion
